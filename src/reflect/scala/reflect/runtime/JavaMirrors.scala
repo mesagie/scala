@@ -401,26 +401,32 @@ private[reflect] trait JavaMirrors extends internal.SymbolTable with api.JavaUni
             extends JavaMethodMirror(symbol) {
       def bind(newReceiver: Any) = new JavaByNameMethodMirror(newReceiver, symbol)
       def apply(args: Any*): Any = {
-        val transformed = map2(args.toList, symbol.paramss.flatten)((arg, param) => if (isByNameParamType(param.info)) () => arg else arg)
+          val transformed = map2(args.toList, symbol.paramss.flatten)((arg, param) => if (isByNameParamType(param.info)) () => arg else arg)
         jinvoke(jmeth, receiver, transformed)
       }
     }
 
-    private class JavaBytecodelessMethodMirror[T: ClassTag](val receiver: T, symbol: MethodSymbol)
+        private class JavaBytecodelessMethodMirror[T: ClassTag](val receiver: T, symbol: MethodSymbol)
             extends JavaMethodMirror(symbol) {
+       
+       val params = symbol.paramss.flatten
+       val isVarArgs = isVarArgsList(params)
+       lazy val jmeths = classOf[BoxesRunTime].getDeclaredMethods.filter(_.getName == nme.primitiveMethodName(symbol.name).toString)
+
        def bind(newReceiver: Any) = new JavaBytecodelessMethodMirror(newReceiver.asInstanceOf[T], symbol)
+       
        def apply(args: Any*): Any = {
         // checking type conformance is too much of a hassle, so we don't do it here
         // actually it's not even necessary, because we manually dispatch arguments below
-        val params = symbol.paramss.flatten
+        
         val perfectMatch = args.length == params.length
         // todo. this doesn't account for multiple vararg parameter lists
         // however those aren't supported by the mirror API: https://issues.scala-lang.org/browse/SI-6182
         // hence I leave this code as is, to be fixed when the corresponding bug is fixed
-        val varargMatch = args.length >= params.length - 1 && isVarArgsList(params)
+        val varargMatch = args.length >= params.length - 1 && isVarArgs
         if (!perfectMatch && !varargMatch) {
-          val n_arguments = if (isVarArgsList(params)) s"${params.length - 1} or more" else s"${params.length}"
-          val s_arguments = if (params.length == 1 && !isVarArgsList(params)) "argument" else "arguments"
+          val n_arguments = if (isVarArgs) s"${params.length - 1} or more" else s"${params.length}"
+          val s_arguments = if (params.length == 1 && !isVarArgs) "argument" else "arguments"
           throw new ScalaReflectionException(s"${showMethodSig(symbol)} takes $n_arguments $s_arguments")
         }
 
@@ -429,8 +435,7 @@ private[reflect] trait JavaMirrors extends internal.SymbolTable with api.JavaUni
         def objArgs           = args.asInstanceOf[Seq[AnyRef]]
         def fail(msg: String) = throw new ScalaReflectionException(msg + ", it cannot be invoked with mirrors")
 
-        def invokePrimitiveMethod = {
-          val jmeths = classOf[BoxesRunTime].getDeclaredMethods.filter(_.getName == nme.primitiveMethodName(symbol.name).toString)
+        def invokePrimitiveMethod = {          
           assert(jmeths.length == 1, jmeths.toList)
           jinvoke(jmeths.head, null, objReceiver +: objArgs)
         }
@@ -457,7 +462,7 @@ private[reflect] trait JavaMirrors extends internal.SymbolTable with api.JavaUni
           case sym if isStringConcat(sym)             => receiver.toString + objArg0
           case sym if sym.owner.isPrimitiveValueClass => invokePrimitiveMethod
           case sym if sym == Predef_classOf           => fail("Predef.classOf is a compile-time function")
-          case sym if sym.isMacro                     => fail(s"${symbol.fullName} is a macro, i.e. a compile-time function")
+          case sym if sym.isTermMacro                 => fail(s"${symbol.fullName} is a macro, i.e. a compile-time function")
           case _                                      => abort(s"unsupported symbol $symbol when invoking $this")
         }
       }
