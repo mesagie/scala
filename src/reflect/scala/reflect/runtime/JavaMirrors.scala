@@ -408,19 +408,22 @@ private[reflect] trait JavaMirrors extends internal.SymbolTable with api.JavaUni
 
     private class JavaBytecodelessMethodMirror[T: ClassTag](val receiver: T, symbol: MethodSymbol)
             extends JavaMethodMirror(symbol) {
+
+       // checking type conformance is too much of a hassle, so we don't do it here
+       // actually it's not even necessary, because we manually dispatch arguments below
+       val params = symbol.paramss.flatten
+       val isVarArgs = isVarArgsList(params)
+
        def bind(newReceiver: Any) = new JavaBytecodelessMethodMirror(newReceiver.asInstanceOf[T], symbol)
        def apply(args: Any*): Any = {
-        // checking type conformance is too much of a hassle, so we don't do it here
-        // actually it's not even necessary, because we manually dispatch arguments below
-        val params = symbol.paramss.flatten
         val perfectMatch = args.length == params.length
         // todo. this doesn't account for multiple vararg parameter lists
         // however those aren't supported by the mirror API: https://issues.scala-lang.org/browse/SI-6182
         // hence I leave this code as is, to be fixed when the corresponding bug is fixed
-        val varargMatch = args.length >= params.length - 1 && isVarArgsList(params)
+        val varargMatch = args.length >= params.length - 1 && isVarArgs
         if (!perfectMatch && !varargMatch) {
-          val n_arguments = if (isVarArgsList(params)) s"${params.length - 1} or more" else s"${params.length}"
-          val s_arguments = if (params.length == 1 && !isVarArgsList(params)) "argument" else "arguments"
+          val n_arguments = if (isVarArgs) s"${params.length - 1} or more" else s"${params.length}"
+          val s_arguments = if (params.length == 1 && !isVarArgs) "argument" else "arguments"
           throw new ScalaReflectionException(s"${showMethodSig(symbol)} takes $n_arguments $s_arguments")
         }
 
